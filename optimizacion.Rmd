@@ -1,0 +1,124 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+date: "2023-01-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(eval = FALSE)
+```
+
+```{r, echo=FALSE}
+library(randomForest)
+library(mlbench)
+library(caret)
+library(readxl)
+library(dplyr)
+library(pROC)
+library(tidymodels)
+```
+
+
+```{r, echo=FALSE}
+data<-read_xlsx("CHEMBL4296563_Chikungunya_Desc_NormDimRed_7000nm.xlsx")
+```
+
+```{r, echo=FALSE}
+Data<-data%>%select(-1,-2,-3,-5,-6,-7,-8)
+```
+
+
+```{r, echo=FALSE}
+Data$Activity<-factor(Data$Activity)
+Data$`Standard Relation`<-factor(Data$`Standard Relation`)
+Data_<-data.frame(Data)
+```
+
+```{r,echo=FALSE}
+set.seed(12345)
+training<-sample(272,floor(272*0.670))
+data_train<-Data_[training,-2]
+data_test<-Data_[-training,-2]
+
+data_labels<-Data_[2]
+set.seed(12345)
+labels<-sample(272,floor(272*0.670))
+labels_train<-data_labels[labels,]
+labels_test<-data_labels[-labels,]
+prop.table(table(labels_train))
+prop.table(table(labels_test))
+```
+
+```{r, echo=FALSE}
+set.seed(12345)
+training<-sample(272,floor(272*0.670))
+rf_train<-Data_[training,]
+rf_test<-Data_[-training,]
+```
+
+
+# Optimización de hiperparámetros
+```{r}
+customRF <- list(type = "Classification", library = "randomForest", loop = NULL)
+customRF$parameters <- data.frame(parameter = c("mtry", "ntree"),
+                                  class = rep("numeric", 2), label = c("mtry", "ntree"))
+customRF$grid <- function(x, y, len = NULL, search = "grid") {}
+customRF$fit <- function(x, y, wts, param, lev, last, weights,
+                         classProbs, ...) {
+  randomForest(x, y, mtry = param$mtry, ntree=param$ntree, ...)
+}
+customRF$predict <- function(modelFit, newdata, preProc = NULL,
+                             submodels = NULL)
+   predict(modelFit, newdata)
+customRF$prob <- function(modelFit, newdata, preProc = NULL,
+                          submodels = NULL)
+   predict(modelFit, newdata, type = "prob")
+customRF$sort <- function(x) x[order(x[,1]),]
+customRF$levels <- function(x) x$classes
+```
+
+```{r}
+# train model
+control <- trainControl(method="repeatedcv", number=10, repeats=3)
+tunegrid <- expand.grid(.mtry=c(5:25), .ntree=c(50,75,100,125,150,175,200,250))
+set.seed(12345)
+custom <- train(Activity~., data=rf_train, method=customRF, metric="AUC", 
+                tuneGrid=tunegrid, trControl=control)
+summary(custom)
+plot(custom)
+```
+```{r}
+print(custom)
+```
+
+
+# train model
+```{r}
+set.seed(12345)
+rf_model_op<-randomForest(Activity~., data = rf_train, ntree=75, mtry=22)
+print(rf_model_op)
+```
+
+```{r}
+predict_rf_op<-predict(rf_model_op, rf_test[-2])
+confusionMatrix(rf_test$Activity, predict_rf_op, positive = "1")
+```
+
+```{r}
+predict_rf_op<-predict(rf_model_op, rf_test, type="prob")
+```
+
+```{r}
+ROC_rf<-roc(rf_test$Activity, predict_rf_op[,2])
+ROC_rf_auc<-auc(ROC_rf)
+ROC_rf_auc
+```
+
+
+
+
+
+

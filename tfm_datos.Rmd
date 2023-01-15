@@ -1,0 +1,767 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo=FALSE}
+library(readxl)
+library(dplyr)
+```
+
+```{r}
+data<-read_xlsx("CHEMBL4296563_Chikungunya_Desc_NormDimRed_7000nm.xlsx")
+```
+
+```{r, echo=FALSE}
+Data<-data%>%select(-1,-2,-3,-4,-5,-6,-7,-8)
+```
+
+```{r}
+Data$Activity<-factor(Data$Activity)
+Data_<-data.frame(Data)
+```
+Selección aleatoria de los datos
+
+```{r}
+set.seed(12345)
+training<-sample(272,floor(272*0.670))
+data_train<-Data_[training,-1]
+data_test<-Data_[-training,-1]
+
+data_labels<-Data_[1]
+set.seed(12345)
+labels<-sample(272,floor(272*0.670))
+labels_train<-data_labels[labels,]
+labels_test<-data_labels[-labels,]
+prop.table(table(labels_train))
+prop.table(table(labels_test))
+```
+
+```{r}
+summary(labels_test)
+summary(labels_train)
+```
+Las muestras de actividad y no actividad se encuentran distribuidas equitativamente por lo que se puede continuar.
+
+```{r,echo=FALSE}
+library(dplyr)
+library(class)
+library(knitr)
+library(gmodels)
+library(pROC)
+library(caret)
+library(neuralnet)
+library(e1071)
+library(keras)
+library(kernlab)
+library(ROCR)
+library(C50)
+library(randomForest)
+library(reticulate)
+```
+# k-Nearest Neighbour
+
+El primer algoritmo de clasificación a emplear será *k-Nearest Neighbour* donde se explorarán los valores para el número de vecinos **k**=1,3,5,7 y 11. 
+
+## Modelo k=1
+```{r}
+#Predicción para k = 1
+set.seed(12345)
+test_pred1<-knn(train = data_train, test = data_test, cl=labels_train, k=1, prob=TRUE)
+res<-table(test_pred1,labels_test)
+confusionMatrix(res, positive="1")
+```
+
+```{r}
+prob<-attr(test_pred1,"prob")
+prob<-ifelse(test_pred1 =="1",prob,1-prob)
+ROC_knn<- roc(labels_test, prob)
+ROC_knn_auc<-auc(ROC_knn)
+ROC_knn_auc
+```
+
+
+## Modelo k=3
+```{r}
+#Predicción para k = 3
+set.seed(12345)
+test_pred3<-knn(train = data_train, test = data_test, cl=labels_train, k=3)
+res<-table(test_pred3,labels_test)
+confusionMatrix(res, positive="1")
+```
+## Modelo k=5
+```{r}
+#Predicción para k = 5
+set.seed(12345)
+test_pred5<-knn(train = data_train, test = data_test, cl=labels_train, k=5)
+res<-table(test_pred5,labels_test)
+confusionMatrix(res, positive="1")
+```
+## Modelo k=7
+```{r}
+#Predicción para k = 7
+set.seed(12345)
+test_pred7<-knn(train = data_train, test = data_test, cl=labels_train, k=7)
+res<-table(test_pred7,labels_test)
+confusionMatrix(res, positive="1")
+```
+
+## Modelo k=11
+```{r}
+#Predicción para k = 11
+set.seed(12345)
+test_pred11<-knn(train = data_train, test = data_test, cl=labels_train, k=11)
+res<-table(test_pred11,labels_test)
+confusionMatrix(res, positive="1")
+```
+
+
+```{r}
+set.seed(12345)
+k<-c(1,3,5,7,11)
+for(i in k){
+  test_pred<-knn(train = data_train, test = data_test, cl=labels_train,    k=i, prob=TRUE)
+  prob<-attr(test_pred,"prob")
+  prob1<-ifelse(test_pred =="1",prob,1-prob)
+  auc<-auc(labels_test,prob1)
+  pred_knn<- ROCR::prediction(prob1, labels_test)
+  pred_knn<-performance(pred_knn,"tpr","fpr")
+  plot(pred_knn, avg="threshold",col="red",lwd=2,
+       main=paste("Curva ROC para k=",i,"Valor AUC=", round(auc,4)))
+}
+```
+
+# Naive Bayes
+
+## Laplace = 0
+Para el caso en que laplace es igual a 0:
+```{r}
+set.seed(12345)
+data_bayes<-naiveBayes(data_train, labels_train, laplace = 1)
+bayes_pred<-predict(data_bayes, data_test)
+confusionMatrix(bayes_pred,labels_test, positive = "1")
+```
+
+Se obtienen 36 verdaderos negativos, 22 verdaderos positivos, 11 falsos positivos y 21 falsos negativos. Con una precisión de 0.6444, con valor aceptable 0.2804 y con una sensibilidad y especificidad de 0.5116 y 0.7660 respectivamente.
+
+## Laplace = 1
+Para laplace = 1
+```{r}
+set.seed(12345)
+data_bayes2<-naiveBayes(data_train, labels_train, laplace = 1)
+bayes_pred2<-predict(data_bayes2, data_test)
+confusionMatrix(bayes_pred2,labels_test, positive = "1")
+```
+Mismo resultado
+
+## Laplace 5
+```{r}
+set.seed(12345)
+data_bayes5<-naiveBayes(data_train, labels_train, laplace = 5)
+bayes_pred5<-predict(data_bayes5, data_test)
+confusionMatrix(bayes_pred5,labels_test, positive = "1")
+```
+
+```{r}
+pred_nb<-predict(data_bayes, data_test, type="raw")
+ROC_nb<-roc(labels_test, pred_nb[,2])
+ROC_nb_auc<-auc(ROC_nb)
+ROC_nb_auc
+```
+
+
+# SVM
+Implementación con el modelo para dos tipos de *kernel* una para un modelo de tipo lineal (vanilladot) y otra para un kernel Gaussiano (rbfdot).
+
+```{r}
+set.seed(12345)
+training<-sample(272,floor(272*0.670))
+vector_train<-Data_[training,]
+vector_test<-Data_[-training,]
+```
+
+## Kernel lineal
+
+Modelo kernel de función lineal C=1
+```{r}
+set.seed(12345)
+vector_lineal<-ksvm(Activity~., data = vector_train, kernel = "vanilladot",
+                    scale=FALSE,prob.model=TRUE)
+```
+
+```{r}
+vector_lineal
+```
+
+Para un coste 1 se obtiene una tasa de erro de 0.1703 donde 1 de cada 6 predicciones podría ser errónea
+
+```{r}
+vector_lineal_pred<-predict(vector_lineal, vector_test)
+agreetment<-vector_lineal_pred==vector_test$Activity
+prop.table(table(agreetment))
+```
+
+
+
+```{r}
+repre_lineal<-table(vector_lineal_pred,vector_test$Activity)
+cmat_lineal<-confusionMatrix(repre_lineal, positive ="1")
+cmat_lineal
+```
+
+Precisión ligeramente superior a la del modelo anterior
+
+
+```{r}
+vector_lineal_score<-predict(vector_lineal,vector_test, type="probabilities")[,2]
+ROC_svm<-roc(vector_test$Activity, vector_lineal_score)
+ROC_svm_auc<-auc(ROC_svm)
+ROC_svm_auc
+```
+
+
+```{r}
+vector_lineal_score<-predict(vector_lineal,vector_test, type="probabilities")[,2]
+pred_lineal<- ROCR::prediction(vector_lineal_score, vector_test$Activity)
+perf_lineal<-performance(pred_lineal,"tpr","fpr")
+plot(perf_lineal, lwd=2,colorize=TRUE, main="ROC: Actuación SVM kernel linear")
+```
+
+Modelo kernel de función lineal C=3
+```{r}
+set.seed(12345)
+vector_lineal3<-ksvm(Activity~., data = vector_train, kernel = "vanilladot",C=3,
+                     scale=FALSE,prob.model=TRUE)
+```
+
+```{r}
+vector_lineal3
+```
+
+Para un coste 1 se obtiene una tasa de erro de 0.1648 donde 1 de cada 6 predicciones podría ser errónea
+
+```{r}
+vector_lineal_pred3<-predict(vector_lineal3, vector_test)
+agreetment<-vector_lineal_pred3==vector_test$Activity
+prop.table(table(agreetment))
+```
+
+```{r}
+repre_lineal3<-table(vector_lineal_pred3,vector_test$Activity)
+cmat_lineal3<-confusionMatrix(repre_lineal3, positive ="1")
+cmat_lineal3
+```
+
+Modelo kernel de función lineal C=7
+```{r}
+set.seed(12345)
+vector_lineal7<-ksvm(Activity~., data = vector_train, kernel = "vanilladot",C=7,
+                     scale=FALSE,prob.model=TRUE)
+```
+
+```{r}
+vector_lineal7
+```
+
+Para un coste 1 se obtiene una tasa de erro de 0.1648 donde 1 de cada 6 predicciones podría ser errónea
+
+```{r}
+vector_lineal_pred7<-predict(vector_lineal7, vector_test)
+agreetment<-vector_lineal_pred7==vector_test$Activity
+prop.table(table(agreetment))
+```
+
+```{r}
+repre_lineal7<-table(vector_lineal_pred7,vector_test$Activity)
+cmat_lineal7<-confusionMatrix(repre_lineal7,positive ="1")
+cmat_lineal7
+```
+
+## Kernel rbfdot
+Modelo con kernel Gaussiano RBF.
+```{r}
+set.seed(12345)
+vector_gauss<-ksvm(Activity~., data = vector_train, kernel = "rbfdot",
+                   scale = FALSE, prob.model=TRUE)
+vector_gauss
+```
+
+Error de 0.1923 ligeramente superior con respecto al lineal.
+
+```{r}
+vector_gauss_pred<-predict(vector_gauss, vector_test)
+agreetment_gauss<-vector_gauss_pred==vector_test$Activity
+prop.table(table(agreetment_gauss))
+```
+
+El número de predicciones erróneas es mayor que en el caso anterior.
+
+```{r}
+repre_gauss<-table(vector_gauss_pred,vector_test$Activity)
+cmat_gauss<-confusionMatrix(repre_gauss,positive ="1")
+cmat_gauss
+```
+
+La precisión, así como la sensibilidad y la especificidad bajan ligeramente respecto al modelo SVM lineal.
+
+```{r}
+vector_gauss_score<-predict(vector_gauss,vector_test, type="probabilities")[,2]
+pred_radial<- ROCR::prediction(vector_gauss_score, vector_test$Activity)
+perf_radial<-performance(pred_radial,"tpr","fpr")
+plot(perf_radial, lwd=2,
+     colorize=TRUE, main="ROC: Actuación SVM kernel radial")
+```
+
+Modelo con kernel Gaussiano RBF C=3
+```{r}
+set.seed(12345)
+vector_gauss3<-ksvm(Activity~., data = vector_train, kernel = "rbfdot", C=3,
+                  scale = FALSE, prob.model=TRUE)
+vector_gauss3
+```
+
+```{r}
+vector_gauss_pred3<-predict(vector_gauss3, vector_test)
+agreetment_gauss3<-vector_gauss_pred3==vector_test$Activity
+prop.table(table(agreetment_gauss3))
+```
+
+
+```{r}
+repre_gauss3<-table(vector_gauss_pred3,vector_test$Activity)
+cmat_gauss3<-confusionMatrix(repre_gauss3,positive ="1")
+cmat_gauss3
+```
+
+Modelo con kernel Gaussiano RBF C=7
+```{r}
+set.seed(12345)
+vector_gauss7<-ksvm(Activity~., data = vector_train, kernel = "rbfdot", C=7,
+                  scale = FALSE, prob.model=TRUE)
+vector_gauss7
+```
+
+```{r}
+vector_gauss_pred7<-predict(vector_gauss7, vector_test)
+agreetment_gauss7<-vector_gauss_pred7==vector_test$Activity
+prop.table(table(agreetment_gauss7))
+```
+
+
+```{r}
+repre_gauss7<-table(vector_gauss_pred7,vector_test$Activity)
+cmat_gauss7<-confusionMatrix(repre_gauss7,positive ="1")
+cmat_gauss7
+```
+
+
+# XGBoost
+```{r}
+library(xgboost)
+```
+
+```{r}
+set.seed(12345)
+xgb_labels<-as.vector(labels_train)
+xgb_train<-as.matrix(data_train)
+```
+
+## nrounds = 1
+
+### max.depth 12
+```{r}
+bst<-xgboost(data=xgb_train, label = xgb_labels, max.depth = 12, eta = 1, nthread = 2,
+             nrounds = 1, objective = "binary:logistic", verbose = 2)
+```
+
+```{r}
+pred<-predict(bst, as.matrix(data_test))
+```
+
+```{r}
+xgb_prediction<-as.numeric(pred>0.5)
+xgb_prediction<-as.factor(xgb_prediction)
+```
+
+```{r}
+err<-mean(as.numeric(pred>0.5) !=labels_test)
+print(paste("test-error=", err))
+```
+
+```{r}
+xgb_tree<-confusionMatrix(xgb_prediction,labels_test, positive ="1")
+xgb_tree
+```
+
+### max.depth 6
+```{r}
+bst1<-xgboost(data=as.matrix(data_train), label = xgb_labels, max.depth = 6, eta = 1,
+              nthread = 2, nrounds = 1,
+              objective = "binary:logistic", verbose = 2)
+```
+
+```{r}
+pred1<-predict(bst1, as.matrix(data_test))
+```
+
+```{r}
+xgb_prediction1<-as.numeric(pred1>0.5)
+xgb_prediction1<-as.factor(xgb_prediction1)
+```
+
+```{r}
+xgb_tree1<-confusionMatrix(xgb_prediction1,labels_test, positive ="1")
+xgb_tree1
+```
+
+
+### nrounds = 6
+
+### max.depth 12
+```{r}
+bst3<-xgboost(data=as.matrix(data_train), label = xgb_labels, max.depth = 12, eta = 1,
+              nthread = 2, nrounds = 6, objective = "binary:logistic",
+              verbose = 2)
+```
+
+```{r}
+pred3<-predict(bst3, as.matrix(data_test))
+```
+
+```{r}
+xgb_prediction3<-as.numeric(pred>0.5)
+xgb_prediction3<-as.factor(xgb_prediction3)
+```
+
+```{r}
+xgb_tree3<-confusionMatrix(xgb_prediction3,labels_test, positive ="1")
+xgb_tree3
+```
+
+### max.depth 6
+
+```{r}
+bst4<-xgboost(data=as.matrix(data_train), label = xgb_labels, max.depth = 6,
+              eta = 1, nthread = 2, nrounds = 6, objective = "binary:logistic",
+              verbose = 2)
+```
+
+```{r}
+pred4<-predict(bst4, as.matrix(data_test))
+```
+
+```{r}
+xgb_prediction4<-as.numeric(pred4>0.5)
+xgb_prediction4<-as.factor(xgb_prediction4)
+```
+
+```{r}
+xgb_tree4<-confusionMatrix(xgb_prediction4,labels_test, positive ="1")
+xgb_tree4
+```
+
+```{r}
+pred_xgb<-predict(bst4, as.matrix(data_test), type="prob")
+ROC_xgb<-roc(labels_test, pred_xgb)
+ROC_xgb_auc<-auc(ROC_xgb)
+ROC_xgb_auc
+```
+
+
+## nrounds 12
+
+### max.depth 12
+```{r}
+bst5<-xgboost(data=as.matrix(data_train), label = xgb_labels, max.depth = 12,eta = 1,
+              nthread = 2, nrounds = 12, objective = "binary:logistic", verbose = 2)
+```
+
+```{r}
+pred5<-predict(bst5, as.matrix(data_test))
+```
+
+```{r}
+xgb_prediction5<-as.numeric(pred5>0.5)
+xgb_prediction5<-as.factor(xgb_prediction5)
+```
+
+```{r}
+xgb_tree5<-confusionMatrix(xgb_prediction5,labels_test, positive ="1")
+xgb_tree5
+```
+
+### max.depth 6
+```{r}
+bst6<-xgboost(data=as.matrix(data_train), label = xgb_labels, max.depth = 6,eta = 1, 
+              nthread = 2, nrounds = 12, objective = "binary:logistic", verbose = 2)
+```
+
+```{r}
+pred6<-predict(bst6, as.matrix(data_test))
+```
+
+```{r}
+xgb_prediction6<-as.numeric(pred6>0.5)
+xgb_prediction6<-as.factor(xgb_prediction6)
+```
+
+```{r}
+xgb_tree6<-confusionMatrix(xgb_prediction6,labels_test, positive ="1")
+xgb_tree6
+```
+
+
+```{r, echo=FALSE}
+data<-read_xlsx("CHEMBL4296563_Chikungunya_Desc_NormDimRed_7000nm.xlsx")
+```
+
+```{r, echo=FALSE}
+Data<-data%>%select(-1,-2,-3,-5,-6,-7,-8)
+```
+
+
+```{r, echo=FALSE}
+Data$Activity<-factor(Data$Activity)
+Data$`Standard Relation`<-factor(Data$`Standard Relation`)
+Data_<-data.frame(Data)
+```
+
+```{r, echo=FALSE}
+set.seed(12345)
+training<-sample(272,floor(272*0.670))
+data_train<-Data_[training,-2]
+data_test<-Data_[-training,-2]
+
+data_labels<-Data_[2]
+set.seed(12345)
+labels<-sample(272,floor(272*0.670))
+labels_train<-data_labels[labels,]
+labels_test<-data_labels[-labels,]
+prop.table(table(labels_train))
+prop.table(table(labels_test))
+```
+
+```{r, echo=FALSE}
+summary(labels_test)
+summary(labels_train)
+```
+
+# Árbol de Clasificación
+
+El siguiente modelo es mediante Árboles de Clasificación donde se estudiará la activación o no activación de la opción boosting.
+
+Cuando se habla de *boosting* se refiere a la creación de numerosos árboles de decisión y estos votan en la mejor clase para cada muestra. En este caso vamos a aplicar un boost de 10.
+
+## No boosting
+```{r}
+tree_model<-C5.0(data_train,labels_train)
+tree_model
+```
+
+```{r}
+summary(tree_model)
+```
+
+Creamos un vector de valores de *class* predichos, los cuales compararemos con los valores reales de clase de los datos test.
+
+```{r}
+tree_predict<-predict(tree_model,data_test)
+cfm_tree<-confusionMatrix(tree_predict,labels_test, positive ="1")
+cfm_tree
+```
+
+## Boosting on 15
+Vamos ahora a observar el rendimiento del modelo teniendo en cuenta la opción boosting (trials) que indica el número de árboles de decisión separados para usar en la mejora del modelo. El valor de trials es 15 que es el que se suele utilizar por defecto
+
+```{r}
+set.seed(12345)
+tree_model_boost<-C5.0(data_train,labels_train,trials = 15)
+```
+
+
+Como podemos observar se ha producido una gran mejora en el rendimiento del modelo obteniendo ahora solo 26 fallos con una tasa de error de 9.9%. 
+
+
+```{r}
+set.seed(12345)
+tree_boost_predict<-predict(tree_model_boost,data_test)
+cfm_tree_boost<-confusionMatrix(tree_boost_predict,labels_test, positive ="1")
+cfm_tree_boost
+```
+
+## Boosting on 40
+```{r}
+set.seed(12345)
+tree_model_boost40<-C5.0(data_train,labels_train,trials = 40)
+```
+
+```{r}
+set.seed(12345)
+tree_boost_predict40<-predict(tree_model_boost40,data_test)
+cfm_tree_boost40<-confusionMatrix(tree_boost_predict40,labels_test, positive ="1")
+cfm_tree_boost40
+```
+
+```{r}
+tree_boost_predict40<-predict(tree_model_boost40, data_test, type="prob")
+ROC_tree<-roc(labels_test, tree_boost_predict40[,2])
+ROC_tree_auc<-auc(ROC_tree)
+ROC_tree_auc
+```
+
+
+## Boosting on 50
+```{r}
+set.seed(12345)
+tree_model_boost50<-C5.0(data_train,labels_train,trials = 50)
+```
+
+```{r}
+set.seed(12345)
+tree_boost_predict50<-predict(tree_model_boost50,data_test)
+cfm_tree_boost50<-confusionMatrix(tree_boost_predict50,labels_test, positive ="1")
+cfm_tree_boost50
+```
+
+# Random Forest
+Se usan de ejemplo número de árboles de 50, 100 y 200
+```{r}
+set.seed(12345)
+training<-sample(272,floor(272*0.670))
+rf_train<-Data_[training,]
+rf_test<-Data_[-training,]
+```
+
+## Random Forest = 50
+Random Forest (50)
+```{r}
+set.seed(12345)
+rf_model_50<-randomForest(Activity~., data = rf_train, ntree=50)
+print(rf_model_50)
+```
+
+```{r}
+predict_rf_50<-predict(rf_model_50, rf_test[-2])
+confusionMatrix(rf_test$Activity, predict_rf_50, positive = "1")
+```
+
+## Random Forest = 100
+Random Forest (100)
+```{r}
+set.seed(12345)
+rf_model_100<-randomForest(Activity~., data = rf_train, ntree=100)
+print(rf_model_100)
+```
+
+```{r}
+plot(rf_model_100)
+```
+
+```{r}
+varImpPlot(rf_model_100, sort=TRUE, n.var = 12,nrow(rf_model_100$importanceSD), 
+           main = "Importancia descriptores")
+```
+
+Ver posibles distribuciones
+```{r}
+par(mfrow=c(2,2))
+boxplot(Data_$SlogP~Data_$Activity, col="red", 
+        xlab="Activity", ylab="Valor", main="SlogP")
+boxplot(Data_$smr_VSA3~Data_$Activity, col="red", 
+        xlab="Activity", ylab="Valor", main="smr_VSA3")
+boxplot(Data_$Energy~Data_$Activity, col="red", 
+        xlab="Activity", ylab="Valor", main="Energy")
+boxplot(Data_$peoe_VSA7~Data_$Activity, col="red",
+        xlab="Activity", ylab="Valor", main="peoe_VSA7")
+boxplot(Data_$peoe_VSA8~Data_$Activity, col="red", 
+        xlab="Activity", ylab="Valor", main="peoe_VSA8")
+boxplot(Data_$MQN29~Data_$Activity, col="red", 
+        xlab="Activity", ylab="Valor", main="MQN29")
+boxplot(Data_$NumHeavyAtoms~Data_$Activity, col="red",
+        xlab="Activity", ylab="Valor", main="NumHeavyAtoms")
+boxplot(Data_$slogp_VSA6~Data_$Activity, col="red", 
+        xlab="Activity", ylab="Valor", main="slogp_VSA6")
+```
+
+
+
+
+Para la predicción del modelo:
+```{r}
+predict_rf_100<-predict(rf_model_100, rf_test[-2])
+confusionMatrix(rf_test$Activity, predict_rf_100, positive = "1")
+```
+
+```{r}
+predict_rf_100<-predict(rf_model_100, rf_test, type="prob")
+```
+
+```{r}
+ROC_rf<-roc(rf_test$Activity, predict_rf_100[,2])
+ROC_rf_auc<-auc(ROC_rf)
+ROC_rf_auc
+```
+
+```{r}
+par(pty="s")
+plot(ROC_rf, col="green", legacy.axes=TRUE,percent=TRUE)
+```
+
+
+## Random Forest = 150
+
+```{r}
+set.seed(12345)
+rf_model_150<-randomForest(Activity~., data = rf_train, ntree=150)
+print(rf_model_150)
+```
+
+```{r}
+predict_rf_150<-predict(rf_model_150, rf_test[-2])
+confusionMatrix(rf_test$Activity, predict_rf_150, positive = "1")
+```
+
+## Random Forest = 200
+Random Forest (200)
+```{r}
+set.seed(12345)
+rf_model_200<-randomForest(Activity~., data = rf_train, ntree=200)
+print(rf_model_200)
+```
+
+```{r}
+predict_rf_200<-predict(rf_model_200, rf_test[-2])
+confusionMatrix(rf_test$Activity, predict_rf_200, positive = "1")
+```
+
+# CURVA ROC
+```{r}
+par(pty="s")
+plot.roc(ROC_rf, col="green", legacy.axes=TRUE,percent=TRUE,
+         xlab="Porcentaje de falsos positivos",
+         ylab="Porcentaje de verdaderos positivos",lwd=2, print.auc = TRUE,
+         print.auc.y = 0.1, print.auc.cex = 0.75)
+plot.roc(ROC_tree, col="blue", lwd=2, add=TRUE, print.auc = TRUE,
+         print.auc.y = 0.6, print.auc.cex = 0.75 )
+plot.roc(ROC_xgb, col="red",lwd=2, add=TRUE, print.auc = TRUE,
+         print.auc.y = 0.5, print.auc.cex = 0.75 )
+plot.roc(ROC_svm, col="purple", lwd=2,add=TRUE, print.auc = TRUE,
+         print.auc.y = 0.4, print.auc.cex = 0.75 )
+plot.roc(ROC_nb, col="brown", lwd=2, add=TRUE, print.auc = TRUE,
+         print.auc.y = 0.3, print.auc.cex = 0.75)
+plot.roc(ROC_knn, col="orange", lwd=2, add=TRUE,print.auc = TRUE,
+         print.auc.y = 0.2, print.auc.cex = 0.75 )
+``` 
+
+
+
+
+
+
+
